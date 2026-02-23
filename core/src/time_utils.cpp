@@ -56,6 +56,56 @@ bool parse_slash(const std::string& text, bool month_first, std::tm* out_tm) {
     return true;
 }
 
+bool parse_date_time_compact(const std::string& date_text, const std::string& time_text, std::tm* out_tm) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    if (std::sscanf(date_text.c_str(), "%4d%2d%2d", &year, &month, &day) != 3) {
+        return false;
+    }
+
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (!time_text.empty()) {
+        int compact = 0;
+        if (std::sscanf(time_text.c_str(), "%2d:%2d:%2d", &hour, &minute, &second) == 3) {
+            // parsed colon-delimited time.
+        } else {
+            int hh = 0;
+            int mm = 0;
+            if (std::sscanf(time_text.c_str(), "%2d:%2d", &hh, &mm) == 2) {
+                hour = hh;
+                minute = mm;
+                second = 0;
+            } else if (std::sscanf(time_text.c_str(), "%d", &compact) == 1) {
+                const std::size_t len = time_text.size();
+                if (len <= 4) {
+                    hour = compact / 100;
+                    minute = compact % 100;
+                    second = 0;
+                } else if (len <= 6) {
+                    hour = compact / 10000;
+                    minute = (compact / 100) % 100;
+                    second = compact % 100;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+    }
+
+    out_tm->tm_year = year - 1900;
+    out_tm->tm_mon = month - 1;
+    out_tm->tm_mday = day;
+    out_tm->tm_hour = hour;
+    out_tm->tm_min = minute;
+    out_tm->tm_sec = second;
+    return true;
+}
+
 bool is_tm_in_range(const std::tm& tm_value) {
     return tm_value.tm_mon >= 0 && tm_value.tm_mon <= 11 && tm_value.tm_mday >= 1 && tm_value.tm_mday <= 31 &&
            tm_value.tm_hour >= 0 && tm_value.tm_hour <= 23 && tm_value.tm_min >= 0 && tm_value.tm_min <= 59 &&
@@ -96,6 +146,15 @@ std::optional<int64_t> parse_timestamp_utc(const std::string& text, DateFormat f
             break;
     }
     if (!ok) {
+        return std::nullopt;
+    }
+    return tm_to_epoch_utc(tm_value);
+}
+
+std::optional<int64_t> parse_date_time_utc_yyyymmdd_hhmmss(const std::string& date_text,
+                                                           const std::string& time_text) {
+    std::tm tm_value{};
+    if (!parse_date_time_compact(date_text, time_text, &tm_value)) {
         return std::nullopt;
     }
     return tm_to_epoch_utc(tm_value);

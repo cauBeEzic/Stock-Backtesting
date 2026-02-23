@@ -3,6 +3,6 @@ add_executable(core_tests
 )
 
 target_link_libraries(core_tests PRIVATE core)
+target_compile_definitions(core_tests PRIVATE STOCKBT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-enable_testing()
 add_test(NAME core_tests COMMAND core_tests)

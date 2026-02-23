@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     }
 
     const auto sample = root / "data" / "sample.csv";
+    const auto equity_golden = root / "tests" / "golden" / "equity.csv";
     const auto trades_golden = root / "tests" / "golden" / "trades.csv";
     const auto metrics_golden = root / "tests" / "golden" / "metrics.json";
 
@@ -35,6 +36,11 @@ int main(int argc, char** argv) {
     const stockbt::BacktestResult result = stockbt::run_sma_backtest(import.candles, params, settings);
 
     std::string error;
+    if (!stockbt::export_equity_csv(equity_golden.string(), import.candles, result, &error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+
     if (!stockbt::export_trades_csv(trades_golden.string(), result, &error)) {
         std::cerr << error << "\n";
         return 1;
@@ -49,6 +55,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::cout << "Regenerated tests/golden/metrics.json and tests/golden/trades.csv\n";
+    std::cout << "Regenerated tests/golden/equity.csv, tests/golden/trades.csv, and tests/golden/metrics.json\n";
     return 0;
 }

@@ -32,6 +32,27 @@ std::string lowercase(std::string input) {
     return input;
 }
 
+std::string normalize_header(std::string input) {
+    input = trim(input);
+    if (!input.empty() && input.front() == '<' && input.back() == '>') {
+        input = input.substr(1, input.size() - 2);
+    }
+    return lowercase(trim(input));
+}
+
+const std::size_t kMissing = static_cast<std::size_t>(-1);
+
+std::size_t find_header_any(const std::unordered_map<std::string, std::size_t>& header_index,
+                            const std::initializer_list<const char*> names) {
+    for (const char* name : names) {
+        const auto it = header_index.find(name);
+        if (it != header_index.end()) {
+            return it->second;
+        }
+    }
+    return kMissing;
+}
+
 std::vector<std::string> parse_csv_line(const std::string& line) {
     std::vector<std::string> fields;
     std::string current;
@@ -96,32 +117,28 @@ ImportResult import_ohlcv_csv(const std::string& csv_path, DateFormat date_forma
     const std::vector<std::string> headers_raw = parse_csv_line(header_line);
     std::unordered_map<std::string, std::size_t> header_index;
     for (std::size_t i = 0; i < headers_raw.size(); ++i) {
-        header_index[lowercase(trim(headers_raw[i]))] = i;
+        header_index[normalize_header(headers_raw[i])] = i;
     }
 
-    const auto date_it = header_index.find("date");
-    const auto timestamp_it = header_index.find("timestamp");
-    const auto open_it = header_index.find("open");
-    const auto high_it = header_index.find("high");
-    const auto low_it = header_index.find("low");
-    const auto close_it = header_index.find("close");
-    const auto volume_it = header_index.find("volume");
+    const std::size_t timestamp_col = find_header_any(header_index, {"timestamp", "date"});
+    const std::size_t dt_col = find_header_any(header_index, {"dtyyyymmdd"});
+    const std::size_t tm_col = find_header_any(header_index, {"time"});
+    const std::size_t o_col = find_header_any(header_index, {"open"});
+    const std::size_t h_col = find_header_any(header_index, {"high"});
+    const std::size_t l_col = find_header_any(header_index, {"low"});
+    const std::size_t c_col = find_header_any(header_index, {"close"});
+    const std::size_t v_col = find_header_any(header_index, {"volume", "vol"});
 
-    const bool has_time = (date_it != header_index.end()) || (timestamp_it != header_index.end());
-    if (!has_time || open_it == header_index.end() || high_it == header_index.end() || low_it == header_index.end() ||
-        close_it == header_index.end() || volume_it == header_index.end()) {
+    const bool has_single_timestamp = timestamp_col != kMissing;
+    const bool has_split_datetime = dt_col != kMissing && tm_col != kMissing;
+    if ((!has_single_timestamp && !has_split_datetime) || o_col == kMissing || h_col == kMissing || l_col == kMissing ||
+        c_col == kMissing || v_col == kMissing) {
         append_issue(&result.errors,
                      1,
-                     "Missing required columns. Required: Date/Timestamp, Open, High, Low, Close, Volume");
+                     "Missing required columns. Required: Date/Timestamp OR DTYYYYMMDD+TIME, Open, High, Low, "
+                     "Close, Volume/VOL");
         return result;
     }
-
-    const std::size_t ts_col = (timestamp_it != header_index.end()) ? timestamp_it->second : date_it->second;
-    const std::size_t o_col = open_it->second;
-    const std::size_t h_col = high_it->second;
-    const std::size_t l_col = low_it->second;
-    const std::size_t c_col = close_it->second;
-    const std::size_t v_col = volume_it->second;
 
     std::vector<ImportIssue> row_issues;
     std::vector<Candle> valid_rows;
@@ -135,14 +152,22 @@ ImportResult import_ohlcv_csv(const std::string& csv_path, DateFormat date_forma
         }
 
         const std::vector<std::string> fields = parse_csv_line(line);
-        const std::size_t max_index = std::max({ts_col, o_col, h_col, l_col, c_col, v_col});
+        const std::size_t ts_req_col = has_single_timestamp ? timestamp_col : dt_col;
+        const std::size_t max_index = has_split_datetime
+                                          ? std::max({dt_col, tm_col, o_col, h_col, l_col, c_col, v_col})
+                                          : std::max({ts_req_col, o_col, h_col, l_col, c_col, v_col});
         if (fields.size() <= max_index) {
             ++result.dropped_rows;
             append_issue(&row_issues, line_number, "Dropped row: missing one or more required field values");
             continue;
         }
 
-        const auto ts = parse_timestamp_utc(fields[ts_col], date_format);
+        std::optional<int64_t> ts;
+        if (has_split_datetime) {
+            ts = parse_date_time_utc_yyyymmdd_hhmmss(fields[dt_col], fields[tm_col]);
+        } else {
+            ts = parse_timestamp_utc(fields[timestamp_col], date_format);
+        }
         if (!ts.has_value()) {
             ++result.dropped_rows;
             append_issue(&row_issues, line_number, "Dropped row: invalid timestamp format");

@@ -11,5 +11,11 @@ Testing/
 *.a
 *.lib
 prd.md
+USDCAD.csv #8million rows, not useful for everyone
 # test temp outputs
 tests/tmp/
+
+# local manual export outputs
+data/equity.csv
+data/trades.csv
+data/metrics.json

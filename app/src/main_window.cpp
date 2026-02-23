@@ -1,8 +1,12 @@
 #include "main_window.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <memory>
 #include <vector>
 
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
@@ -28,6 +32,7 @@
 #include <QtCharts/QChart>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QScatterSeries>
+#include <QtCharts/QValueAxis>
 #include <QtConcurrent/QtConcurrent>
 
 #include "backtest/backtester.hpp"
@@ -39,6 +44,26 @@
 namespace {
 
 constexpr std::size_t kDisplayCap = 50000;
+
+class SortableNumericItem final : public QTableWidgetItem {
+public:
+    explicit SortableNumericItem(const QString& text) : QTableWidgetItem(text) {}
+
+    bool operator<(const QTableWidgetItem& other) const override {
+        const QVariant lhs = data(Qt::UserRole);
+        const QVariant rhs = other.data(Qt::UserRole);
+        if (lhs.isValid() && rhs.isValid()) {
+            bool lhs_ok = false;
+            bool rhs_ok = false;
+            const double lhs_val = lhs.toDouble(&lhs_ok);
+            const double rhs_val = rhs.toDouble(&rhs_ok);
+            if (lhs_ok && rhs_ok) {
+                return lhs_val < rhs_val;
+            }
+        }
+        return QTableWidgetItem::operator<(other);
+    }
+};
 
 QString issue_to_qstring(const stockbt::ImportIssue& issue) {
     if (issue.line == 0) {
@@ -74,6 +99,82 @@ std::vector<QPointF> display_points(const std::vector<stockbt::SeriesPoint>& src
         }
     }
     return out;
+}
+
+std::vector<stockbt::SeriesPoint> points_in_visible_range(const std::vector<stockbt::SeriesPoint>& src,
+                                                          qreal min_x,
+                                                          qreal max_x) {
+    if (src.empty()) {
+        return {};
+    }
+    if (min_x > max_x) {
+        std::swap(min_x, max_x);
+    }
+
+    const int64_t min_ts = static_cast<int64_t>(std::floor(min_x));
+    const int64_t max_ts = static_cast<int64_t>(std::ceil(max_x));
+
+    const auto begin = std::lower_bound(src.begin(), src.end(), min_ts, [](const stockbt::SeriesPoint& point, int64_t ts) {
+        return point.ts < ts;
+    });
+    const auto end = std::upper_bound(src.begin(), src.end(), max_ts, [](int64_t ts, const stockbt::SeriesPoint& point) {
+        return ts < point.ts;
+    });
+    return std::vector<stockbt::SeriesPoint>(begin, end);
+}
+
+void set_x_axis_full_range(QValueAxis* axis_x, const std::vector<stockbt::SeriesPoint>& src) {
+    if (src.empty()) {
+        axis_x->setRange(0.0, 1.0);
+        return;
+    }
+    const qreal min_x = static_cast<qreal>(src.front().ts);
+    const qreal max_x = static_cast<qreal>(src.back().ts);
+    if (min_x == max_x) {
+        axis_x->setRange(min_x - 1.0, max_x + 1.0);
+    } else {
+        axis_x->setRange(min_x, max_x);
+    }
+}
+
+void update_y_axis(QValueAxis* axis_y, const std::vector<QPointF>& points) {
+    if (points.empty()) {
+        axis_y->setRange(0.0, 1.0);
+        return;
+    }
+
+    qreal min_v = std::numeric_limits<qreal>::infinity();
+    qreal max_v = -std::numeric_limits<qreal>::infinity();
+    for (const QPointF& point : points) {
+        min_v = std::min(min_v, point.y());
+        max_v = std::max(max_v, point.y());
+    }
+
+    if (min_v == max_v) {
+        const qreal pad = (std::abs(min_v) > 1e-9) ? std::abs(min_v) * 0.01 : 1.0;
+        axis_y->setRange(min_v - pad, max_v + pad);
+        return;
+    }
+
+    const qreal pad = (max_v - min_v) * 0.05;
+    axis_y->setRange(min_v - pad, max_v + pad);
+}
+
+void refresh_line_series(QLineSeries* line,
+                         QValueAxis* axis_y,
+                         const std::vector<stockbt::SeriesPoint>& source,
+                         qreal min_x,
+                         qreal max_x,
+                         int pixel_width) {
+    const auto visible = points_in_visible_range(source, min_x, max_x);
+    const auto& to_plot = visible.empty() ? source : visible;
+    const auto points = display_points(to_plot, pixel_width);
+
+    line->clear();
+    for (const QPointF& point : points) {
+        line->append(point);
+    }
+    update_y_axis(axis_y, points);
 }
 
 QString format_ts(int64_t ts) {
@@ -159,6 +260,14 @@ void MainWindow::setup_ui() {
     trades_table_->setColumnCount(7);
     trades_table_->setHorizontalHeaderLabels(
         {"Entry Time", "Entry Price", "Exit Time", "Exit Price", "Qty", "PnL", "Return %"});
+    trades_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    trades_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    trades_table_->setAlternatingRowColors(true);
+    trades_table_->setSortingEnabled(true);
+
+    price_chart_view_->setRubberBand(QChartView::RectangleRubberBand);
+    equity_chart_view_->setRubberBand(QChartView::RectangleRubberBand);
+    drawdown_chart_view_->setRubberBand(QChartView::RectangleRubberBand);
 
     auto* export_tab = new QWidget(central_tabs);
     auto* export_layout = new QVBoxLayout(export_tab);
@@ -325,9 +434,6 @@ void MainWindow::render_price_chart() {
     }
 
     auto* line = new QLineSeries(chart);
-    for (const auto& p : display_points(src, price_chart_view_->width())) {
-        line->append(p);
-    }
     line->setName("Close");
     chart->addSeries(line);
 
@@ -346,7 +452,29 @@ void MainWindow::render_price_chart() {
     chart->addSeries(buys);
     chart->addSeries(sells);
 
-    chart->createDefaultAxes();
+    auto* axis_x = new QValueAxis(chart);
+    axis_x->setLabelFormat("%.0f");
+    auto* axis_y = new QValueAxis(chart);
+
+    chart->addAxis(axis_x, Qt::AlignBottom);
+    chart->addAxis(axis_y, Qt::AlignLeft);
+    line->attachAxis(axis_x);
+    line->attachAxis(axis_y);
+    buys->attachAxis(axis_x);
+    buys->attachAxis(axis_y);
+    sells->attachAxis(axis_x);
+    sells->attachAxis(axis_y);
+
+    set_x_axis_full_range(axis_x, src);
+    const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
+    auto refresh = [this, line, axis_x, axis_y, source]() {
+        const int width = std::max(1, static_cast<int>(price_chart_view_->chart()->plotArea().width()));
+        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+    };
+    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
+    refresh();
+
     price_chart_view_->setChart(chart);
 }
 
@@ -362,12 +490,25 @@ void MainWindow::render_equity_chart() {
     }
 
     auto* line = new QLineSeries(chart);
-    for (const auto& p : display_points(src, equity_chart_view_->width())) {
-        line->append(p);
-    }
-
     chart->addSeries(line);
-    chart->createDefaultAxes();
+    auto* axis_x = new QValueAxis(chart);
+    axis_x->setLabelFormat("%.0f");
+    auto* axis_y = new QValueAxis(chart);
+    chart->addAxis(axis_x, Qt::AlignBottom);
+    chart->addAxis(axis_y, Qt::AlignLeft);
+    line->attachAxis(axis_x);
+    line->attachAxis(axis_y);
+
+    set_x_axis_full_range(axis_x, src);
+    const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
+    auto refresh = [this, line, axis_x, axis_y, source]() {
+        const int width = std::max(1, static_cast<int>(equity_chart_view_->chart()->plotArea().width()));
+        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+    };
+    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
+    refresh();
+
     equity_chart_view_->setChart(chart);
 }
 
@@ -383,34 +524,99 @@ void MainWindow::render_drawdown_chart() {
     }
 
     auto* line = new QLineSeries(chart);
-    for (const auto& p : display_points(src, drawdown_chart_view_->width())) {
-        line->append(p);
-    }
-
     chart->addSeries(line);
-    chart->createDefaultAxes();
+    auto* axis_x = new QValueAxis(chart);
+    axis_x->setLabelFormat("%.0f");
+    auto* axis_y = new QValueAxis(chart);
+    chart->addAxis(axis_x, Qt::AlignBottom);
+    chart->addAxis(axis_y, Qt::AlignLeft);
+    line->attachAxis(axis_x);
+    line->attachAxis(axis_y);
+
+    set_x_axis_full_range(axis_x, src);
+    const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
+    auto refresh = [this, line, axis_x, axis_y, source]() {
+        const int width = std::max(1, static_cast<int>(drawdown_chart_view_->chart()->plotArea().width()));
+        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+    };
+    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
+    refresh();
+
     drawdown_chart_view_->setChart(chart);
 }
 
 void MainWindow::render_trades_table() {
+    trades_table_->setSortingEnabled(false);
+    if (last_backtest_.trades.empty()) {
+        trades_table_->setRowCount(1);
+        auto* msg = new QTableWidgetItem("No trades generated for current data/parameters.");
+        trades_table_->setItem(0, 0, msg);
+        for (int c = 1; c < trades_table_->columnCount(); ++c) {
+            trades_table_->setItem(0, c, new QTableWidgetItem(""));
+        }
+        trades_table_->resizeColumnsToContents();
+        trades_table_->setSortingEnabled(true);
+        return;
+    }
+
     trades_table_->setRowCount(static_cast<int>(last_backtest_.trades.size()));
     int row = 0;
     for (const auto& t : last_backtest_.trades) {
-        trades_table_->setItem(row, 0, new QTableWidgetItem(format_ts(t.entry_time)));
-        trades_table_->setItem(row, 1, new QTableWidgetItem(QString::number(t.entry_price, 'f', 6)));
-        trades_table_->setItem(row, 2, new QTableWidgetItem(format_ts(t.exit_time)));
-        trades_table_->setItem(row, 3, new QTableWidgetItem(QString::number(t.exit_price, 'f', 6)));
-        trades_table_->setItem(row, 4, new QTableWidgetItem(QString::number(t.qty)));
-        trades_table_->setItem(row, 5, new QTableWidgetItem(QString::number(t.pnl, 'f', 6)));
-        trades_table_->setItem(row, 6, new QTableWidgetItem(QString::number(t.return_pct * 100.0, 'f', 4)));
+        auto* entry_time = new SortableNumericItem(format_ts(t.entry_time));
+        entry_time->setData(Qt::UserRole, static_cast<qlonglong>(t.entry_time));
+        trades_table_->setItem(row, 0, entry_time);
+
+        auto* entry_price = new SortableNumericItem(QString::number(t.entry_price, 'f', 6));
+        entry_price->setData(Qt::UserRole, t.entry_price);
+        trades_table_->setItem(row, 1, entry_price);
+
+        auto* exit_time = new SortableNumericItem(format_ts(t.exit_time));
+        exit_time->setData(Qt::UserRole, static_cast<qlonglong>(t.exit_time));
+        trades_table_->setItem(row, 2, exit_time);
+
+        auto* exit_price = new SortableNumericItem(QString::number(t.exit_price, 'f', 6));
+        exit_price->setData(Qt::UserRole, t.exit_price);
+        trades_table_->setItem(row, 3, exit_price);
+
+        auto* qty = new SortableNumericItem(QString::number(t.qty));
+        qty->setData(Qt::UserRole, t.qty);
+        trades_table_->setItem(row, 4, qty);
+
+        auto* pnl = new SortableNumericItem(QString::number(t.pnl, 'f', 6));
+        pnl->setData(Qt::UserRole, t.pnl);
+        trades_table_->setItem(row, 5, pnl);
+
+        auto* ret = new SortableNumericItem(QString::number(t.return_pct * 100.0, 'f', 4));
+        ret->setData(Qt::UserRole, t.return_pct * 100.0);
+        trades_table_->setItem(row, 6, ret);
+
         ++row;
     }
     trades_table_->resizeColumnsToContents();
+    trades_table_->setSortingEnabled(true);
 }
 
 void MainWindow::render_backtest_result() {
     for (const auto& warning : last_backtest_.warnings) {
         append_log_line(QString::fromStdString(warning));
+    }
+
+    if (last_backtest_.trades.empty()) {
+        const stockbt::SmaParams params = current_sma_params();
+        if (candles_.size() < params.slow_window) {
+            const QString hint =
+                QString("No trades: dataset has %1 bars but slow_window is %2. Use smaller windows (e.g., fast=2, slow=3) "
+                        "or load a longer dataset.")
+                    .arg(candles_.size())
+                    .arg(params.slow_window);
+            append_log_line(hint);
+            statusBar()->showMessage(hint, 10000);
+        } else {
+            const QString hint = "No trades: no SMA crossovers met entry/exit conditions for current parameters.";
+            append_log_line(hint);
+            statusBar()->showMessage(hint, 8000);
+        }
     }
 
     render_price_chart();

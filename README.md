@@ -17,6 +17,7 @@ C++17 backtesting engine with a Qt desktop shell for importing OHLCV CSV data, r
 - Downsampling utility (bucket min/max)
 - Unit + regression tests (`core_tests`)
 - Golden regeneration utility (`tools/regenerate_goldens`)
+- Performance benchmark utility (`tools/benchmark_mvp`)
 
 ## Project structure
 
@@ -61,10 +62,26 @@ tools/regenerate_goldens
 
 This command updates:
 
+- `tests/golden/equity.csv`
 - `tests/golden/trades.csv`
 - `tests/golden/metrics.json`
 
 Review diffs before committing.
+
+## Performance check (200k rows)
+
+Run the benchmark utility to validate import/backtest performance targets:
+
+```bash
+cmake --build build --target benchmark_mvp
+./build/tools/benchmark_mvp 200000
+```
+
+Example output includes:
+
+- rows imported
+- import duration (ms)
+- backtest duration (ms)
 
 ## Notes on determinism
 
