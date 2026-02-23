@@ -1,0 +1,15 @@
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Testing/
+*.obj
+*.o
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+prd.md
+# test temp outputs
+tests/tmp/

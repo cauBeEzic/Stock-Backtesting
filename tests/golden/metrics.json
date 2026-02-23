@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "dataset": {"rows": 10, "start": "2024-01-01T00:00:00Z", "end": "2024-01-10T00:00:00Z"},
+  "strategy": {"name": "SMA_CROSS", "fast": 2, "slow": 3},
+  "settings": {"starting_cash": 10000.0000000000, "commission_pct": 0.0010000000},
+  "results": {
+    "total_return_pct": -10.1798100000,
+    "total_pnl": -1017.9810000000,
+    "max_drawdown_pct": -18.2636197437,
+    "trades": 1,
+    "win_rate_pct": 0.0000000000,
+    "avg_trade_return_pct": -10.0000000000
+  },
+  "disclaimer": "Educational tool. Not investment advice. No live trading."
+}
