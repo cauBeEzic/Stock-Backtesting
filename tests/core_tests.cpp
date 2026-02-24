@@ -159,6 +159,109 @@ void test_drawdown_units() {
     check_near(result.metrics.max_drawdown_pct, min_dd * 100.0, 1e-6, "max_drawdown_pct conversion should match");
 }
 
+void test_position_size_pct() {
+    const auto import = stockbt::import_ohlcv_csv(src_path("data/sample.csv").string(), stockbt::DateFormat::Iso);
+    check_true(import.success, "sample should import for position sizing test");
+    if (!import.success) {
+        return;
+    }
+
+    stockbt::SmaParams params;
+    params.fast_window = 2;
+    params.slow_window = 3;
+
+    stockbt::BacktestSettings full_settings;
+    full_settings.position_size_pct = 1.0;
+    const auto full = stockbt::run_sma_backtest(import.candles, params, full_settings);
+    check_true(!full.trades.empty(), "full-size run should generate a trade");
+    if (full.trades.empty()) {
+        return;
+    }
+
+    stockbt::BacktestSettings half_settings;
+    half_settings.position_size_pct = 0.5;
+    const auto half = stockbt::run_sma_backtest(import.candles, params, half_settings);
+    check_true(!half.trades.empty(), "half-size run should generate a trade");
+    if (half.trades.empty()) {
+        return;
+    }
+
+    check_true(half.trades[0].qty < full.trades[0].qty, "half-size position should have smaller quantity");
+    check_true(half.trades[0].qty == 499, "half-size quantity should match deterministic sizing for sample");
+}
+
+void test_stop_loss_exit() {
+    stockbt::Series s;
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-01", stockbt::DateFormat::Iso).value_or(0), 10, 10, 10, 10, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-02", stockbt::DateFormat::Iso).value_or(0), 10, 10, 9, 9, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-03", stockbt::DateFormat::Iso).value_or(0), 9, 9, 8, 8, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-04", stockbt::DateFormat::Iso).value_or(0), 8, 9, 8, 9, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-05", stockbt::DateFormat::Iso).value_or(0), 9, 10, 9, 10, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-06", stockbt::DateFormat::Iso).value_or(0), 10, 10, 9, 9, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-07", stockbt::DateFormat::Iso).value_or(0), 8, 8, 8, 8, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-01-08", stockbt::DateFormat::Iso).value_or(0), 12, 12, 12, 12, 1});
+
+    stockbt::SmaParams params;
+    params.fast_window = 2;
+    params.slow_window = 3;
+
+    stockbt::BacktestSettings no_stop;
+    const auto baseline = stockbt::run_sma_backtest(s, params, no_stop);
+    check_true(!baseline.trades.empty(), "baseline run should generate trades");
+    if (baseline.trades.empty()) {
+        return;
+    }
+
+    stockbt::BacktestSettings with_stop;
+    with_stop.stop_loss_pct = 0.05;
+    const auto stopped = stockbt::run_sma_backtest(s, params, with_stop);
+    check_true(!stopped.trades.empty(), "stop-loss run should generate trades");
+    if (stopped.trades.empty()) {
+        return;
+    }
+
+    check_true(stopped.trades[0].exit_time == s[6].ts, "stop-loss should exit at next bar open after trigger");
+    check_true(stopped.trades[0].exit_price == 8.0, "stop-loss exit price should be next open");
+    check_true(stopped.trades[0].exit_time != baseline.trades[0].exit_time,
+               "stop-loss should change exit timing compared with baseline");
+}
+
+void test_take_profit_exit() {
+    stockbt::Series s;
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-01", stockbt::DateFormat::Iso).value_or(0), 10, 10, 10, 10, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-02", stockbt::DateFormat::Iso).value_or(0), 10, 10, 9, 9, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-03", stockbt::DateFormat::Iso).value_or(0), 9, 9, 8, 8, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-04", stockbt::DateFormat::Iso).value_or(0), 8, 9, 8, 9, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-05", stockbt::DateFormat::Iso).value_or(0), 9, 10, 9, 10, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-06", stockbt::DateFormat::Iso).value_or(0), 10, 11, 10, 11, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-07", stockbt::DateFormat::Iso).value_or(0), 12, 12, 12, 12, 1});
+    s.push_back({stockbt::parse_timestamp_utc("2024-02-08", stockbt::DateFormat::Iso).value_or(0), 10, 10, 10, 10, 1});
+
+    stockbt::SmaParams params;
+    params.fast_window = 2;
+    params.slow_window = 3;
+
+    stockbt::BacktestSettings no_tp;
+    const auto baseline = stockbt::run_sma_backtest(s, params, no_tp);
+    check_true(!baseline.trades.empty(), "baseline run should generate trades");
+    if (baseline.trades.empty()) {
+        return;
+    }
+
+    stockbt::BacktestSettings with_tp;
+    with_tp.take_profit_pct = 0.05;
+    const auto target = stockbt::run_sma_backtest(s, params, with_tp);
+    check_true(!target.trades.empty(), "take-profit run should generate trades");
+    if (target.trades.empty()) {
+        return;
+    }
+
+    check_true(target.trades[0].exit_time == s[6].ts, "take-profit should exit at next bar open after trigger");
+    check_true(target.trades[0].exit_price == 12.0, "take-profit exit price should be next open");
+    check_true(target.trades[0].exit_time != baseline.trades[0].exit_time,
+               "take-profit should change exit timing compared with baseline");
+}
+
 void test_regression_goldens() {
     const auto import = stockbt::import_ohlcv_csv(src_path("data/sample.csv").string(), stockbt::DateFormat::Iso);
     check_true(import.success, "sample should import for regression test");
@@ -210,6 +313,9 @@ int main() {
     test_force_close_end_long();
     test_short_dataset_behavior();
     test_drawdown_units();
+    test_position_size_pct();
+    test_stop_loss_exit();
+    test_take_profit_exit();
     test_regression_goldens();
 
     if (g_failures == 0) {

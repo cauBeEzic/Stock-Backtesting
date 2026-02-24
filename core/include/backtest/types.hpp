@@ -46,6 +46,9 @@ struct Metrics {
 struct BacktestSettings {
     double starting_cash{10000.0};
     double commission_pct{0.001};
+    double position_size_pct{1.0}; // fraction of available cash used per entry [0,1]
+    double stop_loss_pct{0.0};     // e.g. 0.02 = 2% stop from entry, 0 disables
+    double take_profit_pct{0.0};   // e.g. 0.03 = 3% target from entry, 0 disables
 };
 
 struct SmaParams {

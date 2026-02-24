@@ -14,6 +14,16 @@ enum class PendingAction {
     Sell,
 };
 
+double clamp01(double value) {
+    if (value < 0.0) {
+        return 0.0;
+    }
+    if (value > 1.0) {
+        return 1.0;
+    }
+    return value;
+}
+
 } // namespace
 
 BacktestResult run_sma_backtest(const Series& candles,
@@ -39,6 +49,9 @@ BacktestResult run_sma_backtest(const Series& candles,
 
     double cash = settings.starting_cash;
     int qty = 0;
+    const double position_size_pct = clamp01(settings.position_size_pct);
+    const bool stop_loss_enabled = settings.stop_loss_pct > 0.0;
+    const bool take_profit_enabled = settings.take_profit_pct > 0.0;
 
     int64_t open_entry_time = 0;
     double open_entry_price = 0.0;
@@ -57,7 +70,8 @@ BacktestResult run_sma_backtest(const Series& candles,
         if (pending == PendingAction::Buy) {
             const double entry_price = bar.o;
             const double denom = entry_price * (1.0 + settings.commission_pct);
-            const int buy_qty = (denom > 0.0) ? static_cast<int>(std::floor(cash / denom)) : 0;
+            const double budget = cash * position_size_pct;
+            const int buy_qty = (denom > 0.0) ? static_cast<int>(std::floor(budget / denom)) : 0;
             if (buy_qty > 0) {
                 const double cost = static_cast<double>(buy_qty) * entry_price;
                 const double commission = cost * settings.commission_pct;
@@ -130,6 +144,25 @@ BacktestResult run_sma_backtest(const Series& candles,
             prev_fast = fast;
             prev_slow = slow;
             prev_valid = true;
+        }
+
+        if (qty > 0 && pending == PendingAction::None) {
+            const double bar_return = (open_entry_price > 0.0) ? ((bar.c - open_entry_price) / open_entry_price) : 0.0;
+            if (stop_loss_enabled && bar_return <= -settings.stop_loss_pct) {
+                if (i + 1 < n) {
+                    pending = PendingAction::Sell;
+                    result.warnings.push_back("Stop-loss triggered; exit scheduled on next bar open.");
+                } else {
+                    result.warnings.push_back("Stop-loss triggered on last bar; exiting at final close.");
+                }
+            } else if (take_profit_enabled && bar_return >= settings.take_profit_pct) {
+                if (i + 1 < n) {
+                    pending = PendingAction::Sell;
+                    result.warnings.push_back("Take-profit triggered; exit scheduled on next bar open.");
+                } else {
+                    result.warnings.push_back("Take-profit triggered on last bar; exiting at final close.");
+                }
+            }
         }
 
         result.equity[i] = cash + static_cast<double>(qty) * bar.c;

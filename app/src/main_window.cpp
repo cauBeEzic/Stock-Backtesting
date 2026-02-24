@@ -30,6 +30,7 @@
 #include <QWidget>
 
 #include <QtCharts/QChart>
+#include <QtCharts/QDateTimeAxis>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
@@ -81,7 +82,7 @@ std::vector<QPointF> display_points(const std::vector<stockbt::SeriesPoint>& src
     if (src.size() <= kDisplayCap) {
         out.reserve(src.size());
         for (const auto& p : src) {
-            out.emplace_back(static_cast<qreal>(p.ts), p.value);
+            out.emplace_back(static_cast<qreal>(p.ts) * 1000.0, p.value);
         }
         return out;
     }
@@ -91,11 +92,11 @@ std::vector<QPointF> display_points(const std::vector<stockbt::SeriesPoint>& src
     out.reserve(buckets.size() * 2);
     for (const auto& bucket : buckets) {
         if (bucket.min_ts <= bucket.max_ts) {
-            out.emplace_back(static_cast<qreal>(bucket.min_ts), bucket.min_value);
-            out.emplace_back(static_cast<qreal>(bucket.max_ts), bucket.max_value);
+            out.emplace_back(static_cast<qreal>(bucket.min_ts) * 1000.0, bucket.min_value);
+            out.emplace_back(static_cast<qreal>(bucket.max_ts) * 1000.0, bucket.max_value);
         } else {
-            out.emplace_back(static_cast<qreal>(bucket.max_ts), bucket.max_value);
-            out.emplace_back(static_cast<qreal>(bucket.min_ts), bucket.min_value);
+            out.emplace_back(static_cast<qreal>(bucket.max_ts) * 1000.0, bucket.max_value);
+            out.emplace_back(static_cast<qreal>(bucket.min_ts) * 1000.0, bucket.min_value);
         }
     }
     return out;
@@ -111,8 +112,8 @@ std::vector<stockbt::SeriesPoint> points_in_visible_range(const std::vector<stoc
         std::swap(min_x, max_x);
     }
 
-    const int64_t min_ts = static_cast<int64_t>(std::floor(min_x));
-    const int64_t max_ts = static_cast<int64_t>(std::ceil(max_x));
+    const int64_t min_ts = static_cast<int64_t>(std::floor(min_x / 1000.0));
+    const int64_t max_ts = static_cast<int64_t>(std::ceil(max_x / 1000.0));
 
     const auto begin = std::lower_bound(src.begin(), src.end(), min_ts, [](const stockbt::SeriesPoint& point, int64_t ts) {
         return point.ts < ts;
@@ -123,17 +124,18 @@ std::vector<stockbt::SeriesPoint> points_in_visible_range(const std::vector<stoc
     return std::vector<stockbt::SeriesPoint>(begin, end);
 }
 
-void set_x_axis_full_range(QValueAxis* axis_x, const std::vector<stockbt::SeriesPoint>& src) {
+void set_x_axis_full_range(QDateTimeAxis* axis_x, const std::vector<stockbt::SeriesPoint>& src) {
     if (src.empty()) {
-        axis_x->setRange(0.0, 1.0);
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        axis_x->setRange(now, now.addSecs(1));
         return;
     }
-    const qreal min_x = static_cast<qreal>(src.front().ts);
-    const qreal max_x = static_cast<qreal>(src.back().ts);
-    if (min_x == max_x) {
-        axis_x->setRange(min_x - 1.0, max_x + 1.0);
+    const QDateTime min_dt = QDateTime::fromSecsSinceEpoch(src.front().ts, Qt::UTC);
+    const QDateTime max_dt = QDateTime::fromSecsSinceEpoch(src.back().ts, Qt::UTC);
+    if (min_dt == max_dt) {
+        axis_x->setRange(min_dt.addSecs(-1), max_dt.addSecs(1));
     } else {
-        axis_x->setRange(min_x, max_x);
+        axis_x->setRange(min_dt, max_dt);
     }
 }
 
@@ -231,6 +233,27 @@ void MainWindow::setup_ui() {
     commission_spin_->setSingleStep(0.0001);
     commission_spin_->setValue(0.001);
 
+    position_size_spin_ = new QDoubleSpinBox(controls);
+    position_size_spin_->setDecimals(2);
+    position_size_spin_->setRange(0.0, 100.0);
+    position_size_spin_->setSingleStep(1.0);
+    position_size_spin_->setValue(100.0);
+    position_size_spin_->setSuffix("%");
+
+    stop_loss_spin_ = new QDoubleSpinBox(controls);
+    stop_loss_spin_->setDecimals(2);
+    stop_loss_spin_->setRange(0.0, 100.0);
+    stop_loss_spin_->setSingleStep(0.25);
+    stop_loss_spin_->setValue(0.0);
+    stop_loss_spin_->setSuffix("%");
+
+    take_profit_spin_ = new QDoubleSpinBox(controls);
+    take_profit_spin_->setDecimals(2);
+    take_profit_spin_->setRange(0.0, 100.0);
+    take_profit_spin_->setSingleStep(0.25);
+    take_profit_spin_->setValue(0.0);
+    take_profit_spin_->setSuffix("%");
+
     dataset_summary_label_ = new QLabel("No dataset loaded", controls);
     dataset_summary_label_->setWordWrap(true);
 
@@ -239,6 +262,9 @@ void MainWindow::setup_ui() {
     controls_layout->addRow("Slow SMA", slow_window_spin_);
     controls_layout->addRow("Starting cash", cash_spin_);
     controls_layout->addRow("Commission", commission_spin_);
+    controls_layout->addRow("Position size", position_size_spin_);
+    controls_layout->addRow("Stop loss", stop_loss_spin_);
+    controls_layout->addRow("Take profit", take_profit_spin_);
     controls_layout->addRow("Dataset", dataset_summary_label_);
 
     auto* controls_dock = new QDockWidget("Controls", this);
@@ -334,6 +360,9 @@ stockbt::BacktestSettings MainWindow::current_settings() const {
     stockbt::BacktestSettings settings;
     settings.starting_cash = cash_spin_->value();
     settings.commission_pct = commission_spin_->value();
+    settings.position_size_pct = position_size_spin_->value() / 100.0;
+    settings.stop_loss_pct = stop_loss_spin_->value() / 100.0;
+    settings.take_profit_pct = take_profit_spin_->value() / 100.0;
     return settings;
 }
 
@@ -445,15 +474,16 @@ void MainWindow::render_price_chart() {
     sells->setMarkerSize(8.0);
 
     for (const auto& t : last_backtest_.trades) {
-        buys->append(static_cast<qreal>(t.entry_time), t.entry_price);
-        sells->append(static_cast<qreal>(t.exit_time), t.exit_price);
+        buys->append(static_cast<qreal>(t.entry_time) * 1000.0, t.entry_price);
+        sells->append(static_cast<qreal>(t.exit_time) * 1000.0, t.exit_price);
     }
 
     chart->addSeries(buys);
     chart->addSeries(sells);
 
-    auto* axis_x = new QValueAxis(chart);
-    axis_x->setLabelFormat("%.0f");
+    auto* axis_x = new QDateTimeAxis(chart);
+    axis_x->setFormat("yyyy-MM-dd");
+    axis_x->setTickCount(8);
     auto* axis_y = new QValueAxis(chart);
 
     chart->addAxis(axis_x, Qt::AlignBottom);
@@ -469,9 +499,10 @@ void MainWindow::render_price_chart() {
     const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
     auto refresh = [this, line, axis_x, axis_y, source]() {
         const int width = std::max(1, static_cast<int>(price_chart_view_->chart()->plotArea().width()));
-        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+        refresh_line_series(
+            line, axis_y, *source, axis_x->min().toMSecsSinceEpoch(), axis_x->max().toMSecsSinceEpoch(), width);
     };
-    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(axis_x, &QDateTimeAxis::rangeChanged, this, [refresh](const QDateTime&, const QDateTime&) { refresh(); });
     connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
     refresh();
 
@@ -491,8 +522,9 @@ void MainWindow::render_equity_chart() {
 
     auto* line = new QLineSeries(chart);
     chart->addSeries(line);
-    auto* axis_x = new QValueAxis(chart);
-    axis_x->setLabelFormat("%.0f");
+    auto* axis_x = new QDateTimeAxis(chart);
+    axis_x->setFormat("yyyy-MM-dd");
+    axis_x->setTickCount(8);
     auto* axis_y = new QValueAxis(chart);
     chart->addAxis(axis_x, Qt::AlignBottom);
     chart->addAxis(axis_y, Qt::AlignLeft);
@@ -503,9 +535,10 @@ void MainWindow::render_equity_chart() {
     const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
     auto refresh = [this, line, axis_x, axis_y, source]() {
         const int width = std::max(1, static_cast<int>(equity_chart_view_->chart()->plotArea().width()));
-        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+        refresh_line_series(
+            line, axis_y, *source, axis_x->min().toMSecsSinceEpoch(), axis_x->max().toMSecsSinceEpoch(), width);
     };
-    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(axis_x, &QDateTimeAxis::rangeChanged, this, [refresh](const QDateTime&, const QDateTime&) { refresh(); });
     connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
     refresh();
 
@@ -525,8 +558,9 @@ void MainWindow::render_drawdown_chart() {
 
     auto* line = new QLineSeries(chart);
     chart->addSeries(line);
-    auto* axis_x = new QValueAxis(chart);
-    axis_x->setLabelFormat("%.0f");
+    auto* axis_x = new QDateTimeAxis(chart);
+    axis_x->setFormat("yyyy-MM-dd");
+    axis_x->setTickCount(8);
     auto* axis_y = new QValueAxis(chart);
     chart->addAxis(axis_x, Qt::AlignBottom);
     chart->addAxis(axis_y, Qt::AlignLeft);
@@ -537,9 +571,10 @@ void MainWindow::render_drawdown_chart() {
     const auto source = std::make_shared<std::vector<stockbt::SeriesPoint>>(std::move(src));
     auto refresh = [this, line, axis_x, axis_y, source]() {
         const int width = std::max(1, static_cast<int>(drawdown_chart_view_->chart()->plotArea().width()));
-        refresh_line_series(line, axis_y, *source, axis_x->min(), axis_x->max(), width);
+        refresh_line_series(
+            line, axis_y, *source, axis_x->min().toMSecsSinceEpoch(), axis_x->max().toMSecsSinceEpoch(), width);
     };
-    connect(axis_x, &QValueAxis::rangeChanged, this, [refresh](qreal, qreal) { refresh(); });
+    connect(axis_x, &QDateTimeAxis::rangeChanged, this, [refresh](const QDateTime&, const QDateTime&) { refresh(); });
     connect(chart, &QChart::plotAreaChanged, this, [refresh](const QRectF&) { refresh(); });
     refresh();
 

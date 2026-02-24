@@ -8,6 +8,10 @@ C++17 backtesting engine with a Qt desktop shell for importing OHLCV CSV data, r
 - CSV import with validation and deterministic normalization
 - SMA crossover backtester (long-only, next-open execution)
 - Portfolio accounting with commission and integer position sizing
+- Risk controls:
+  - position size percentage
+  - stop-loss percentage
+  - take-profit percentage
 - Metrics (`total_return_pct`, `total_pnl`, `trades`, `win_rate_pct`, `avg_trade_return_pct`, `max_drawdown_pct`)
 - Exporters:
   - `equity.csv`
@@ -18,6 +22,7 @@ C++17 backtesting engine with a Qt desktop shell for importing OHLCV CSV data, r
 - Unit + regression tests (`core_tests`)
 - Golden regeneration utility (`tools/regenerate_goldens`)
 - Performance benchmark utility (`tools/benchmark_mvp`)
+- Parameter sweep utility with out-of-sample report (`tools/parameter_sweep`)
 
 ## Project structure
 
@@ -82,6 +87,29 @@ Example output includes:
 - rows imported
 - import duration (ms)
 - backtest duration (ms)
+
+## Parameter sweep (train/test report)
+
+Generate an out-of-sample report across SMA parameter ranges:
+
+```bash
+tools/parameter_sweep data/USDCAD.csv data/sweep_report.csv iso 0.7 5 80 20 300 5 0.5 0.01 0.02
+```
+
+Arguments:
+
+- `csv_path`
+- `out_csv`
+- `date_format` (`iso`, `mdy`, `dmy`)
+- `train_ratio` (e.g. `0.7`)
+- `fast_min`, `fast_max`, `slow_min`, `slow_max`, `step`
+- `position_size_pct`, `stop_loss_pct`, `take_profit_pct`
+
+Output columns:
+
+- `fast,slow`
+- train: `return_pct,max_drawdown_pct,trades`
+- test: `return_pct,max_drawdown_pct,trades`
 
 ## Notes on determinism
 

@@ -55,6 +55,9 @@ private:
     QSpinBox* slow_window_spin_{nullptr};
     QDoubleSpinBox* cash_spin_{nullptr};
     QDoubleSpinBox* commission_spin_{nullptr};
+    QDoubleSpinBox* position_size_spin_{nullptr};
+    QDoubleSpinBox* stop_loss_spin_{nullptr};
+    QDoubleSpinBox* take_profit_spin_{nullptr};
 
     QLabel* dataset_summary_label_{nullptr};
     QPlainTextEdit* import_log_{nullptr};

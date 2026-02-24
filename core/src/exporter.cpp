@@ -71,14 +71,16 @@ bool export_metrics_json(const std::string& output_path,
 
     out << std::fixed << std::setprecision(10);
     out << "{\n";
-    out << "  \"schema_version\": 1,\n";
+    out << "  \"schema_version\": 2,\n";
     out << "  \"dataset\": {\"rows\": " << dataset.rows << ", \"start\": \""
         << format_timestamp_utc_iso8601(dataset.start_ts) << "\", \"end\": \""
         << format_timestamp_utc_iso8601(dataset.end_ts) << "\"},\n";
     out << "  \"strategy\": {\"name\": \"SMA_CROSS\", \"fast\": " << params.fast_window
         << ", \"slow\": " << params.slow_window << "},\n";
     out << "  \"settings\": {\"starting_cash\": " << settings.starting_cash << ", \"commission_pct\": "
-        << settings.commission_pct << "},\n";
+        << settings.commission_pct << ", \"position_size_pct\": " << settings.position_size_pct
+        << ", \"stop_loss_pct\": " << settings.stop_loss_pct << ", \"take_profit_pct\": "
+        << settings.take_profit_pct << "},\n";
     out << "  \"results\": {\n";
     out << "    \"total_return_pct\": " << metrics.total_return_pct << ",\n";
     out << "    \"total_pnl\": " << metrics.total_pnl << ",\n";

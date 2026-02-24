@@ -9,3 +9,9 @@ add_executable(benchmark_mvp
 )
 
 target_link_libraries(benchmark_mvp PRIVATE core)
+
+add_executable(parameter_sweep
+  parameter_sweep.cpp
+)
+
+target_link_libraries(parameter_sweep PRIVATE core)

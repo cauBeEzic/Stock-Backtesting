@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -lt 2 ]; then
+  echo "Usage: tools/parameter_sweep <csv_path> <out_csv> [date_format=iso] [train_ratio=0.7] [fast_min=5] [fast_max=80] [slow_min=20] [slow_max=300] [step=5] [position_size_pct=1.0] [stop_loss_pct=0.0] [take_profit_pct=0.0]"
+  exit 1
+fi
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="${ROOT_DIR}/build"
+
+cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DBUILD_APP=ON
+cmake --build "${BUILD_DIR}" --target parameter_sweep
+"${BUILD_DIR}/tools/parameter_sweep" "$@"
